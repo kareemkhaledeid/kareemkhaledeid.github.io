@@ -55,26 +55,27 @@ if(workSection&&!document.querySelector('#case-studies')){
   s.innerHTML='<div class="container"><div class="section-heading reveal"><div><p class="eyebrow">SELECTED CASE STUDIES</p><h2>How the work comes together.</h2></div><p class="case-study-intro">A closer look at three documented projects. The descriptions stay within the supplied portfolio evidence and focus on the design responsibility visible in the work.</p></div><div class="case-study-grid">'+
   '<article class="case-study-card reveal"><img src="assets/page-11-image-02.jpg" alt="Saad Al-Ubaid exhibition lighting" loading="lazy"><p class="case-kicker">01 · EXHIBITION LIGHTING</p><h3>Saad Al-Ubaid Exhibition</h3><p>Biography and Career Exhibition. The lighting is treated as part of the visitor experience: controlled contrast, visual hierarchy and a focused atmosphere around the exhibited work.</p><div class="case-meta"><div><span>Discipline</span><strong>Exhibition Lighting</strong></div><div><span>Context</span><strong>Art Exhibition</strong></div><div><span>Role</span><strong>Design + Execution</strong></div></div><div class="case-study-cta"><a class="text-link light-link" href="#contact">Discuss an exhibition project ↗</a></div></article>'+
   '<article class="case-study-card reveal"><img src="assets/page-06-image-01.jpg" alt="Circus of the Beast theatrical lighting portfolio image" loading="lazy"><p class="case-kicker">02 · THEATRE LIGHTING</p><h3>Circus of the Beast</h3><p>A theatrical lighting project documented in the portfolio under Lighting Design & Implementation. The design responsibility centers on shaping the stage image through light, contrast and timing.</p><div class="case-meta"><div><span>Discipline</span><strong>Theatre Lighting</strong></div><div><span>Director</span><strong>Maher El-Haggar</strong></div><div><span>Role</span><strong>Lighting Design</strong></div></div><div class="case-study-cta"><a class="text-link light-link" href="#contact">Discuss a theatre project ↗</a></div></article>'+
-  '<article class="case-study-card reveal"><img src="assets/page-08-image-01.jpg" alt="Scenography design portfolio image" loading="lazy"><p class="case-kicker">03 · SCENOGRAPHY</p><h3>Samira Moussa</h3><p>A scenography project documented in the portfolio across decor, costumes and lighting. The work demonstrates a cross-disciplinary approach to building a coherent visual world for performance.</p><div class="case-meta"><div><span>Discipline</span><strong>Scenography</strong></div><div><span>Director</span><strong>Maher El-Haggar</strong></div><div><span>Scope</span><strong>Decor · Costumes · Lighting</strong></div></div><div class="case-study-cta"><a class="text-link light-link" href="#contact">Discuss a scenography project ↗</a></div></article>'+
+  '<article class="case-study-card reveal"><img src="assets/page-08-image-01.jpg" alt="Scenography design portfolio image" loading="lazy"><p class="case-kicker">03 · SCENOGRAPHY</p><h3>Samira Moussa</h3><p>A scenography project documented in the portfolio across decor, costumes and lighting. The work demonstrates a cross-disciplinary approach to building a coherent visual world for performance.</p><div class="case-meta"><div><span>Discipline</span><strong>Scenography</strong></div><div><span>Director</span><strong>Maher El-Haggar</strong></div><div><span>Scope</span><strong>Decor · Costumes · Lighting</strong></div></div><div class="case-study-cta"><a class="text-link light-link" href="#contact">Discuss a scenography project ↗</a></div></div></article>'+
   '</div></div>';
   workSection.after(s);
 }
 
 const caseStudies=document.querySelector('#case-studies');
 const capabilities=document.querySelector('#capabilities');
-const archive=document.querySelector('#archive');
 if(caseStudies&&capabilities)caseStudies.after(capabilities);
 
-/* Stronger conversion layer: a direct invitation for the right client, not a generic contact prompt. */
+/* Stronger conversion layer: a direct invitation for the right client. */
 if(!document.querySelector('#project-cta')){
   const c=document.createElement('section');c.id='project-cta';c.className='final-cta section';
-  c.innerHTML='<div class="container"><p class="eyebrow">AVAILABLE FOR SELECTED PROJECTS</p><h2>Have a space, stage<br>or exhibition to design?</h2><p>For scenography, theatre lighting, exhibition lighting and cultural or live-event projects, I am available for selected collaborations across Egypt, Saudi Arabia and the wider MENA region.</p><div class="cta-links"><a class="button button-dark" href="mailto:kareemkhaledeid@icloud.com?subject=Project%20Inquiry%20—%20Kareem%20Khaled%20Eid">Start a project conversation ↗</a><a class="text-link" href="https://www.linkedin.com/in/kareem-khaled-3069a6174/" target="_blank" rel="noopener">Connect on LinkedIn ↗</a></div></div>';
+  c.innerHTML='<div class="container"><p class="eyebrow">AVAILABLE WORLDWIDE</p><h2>Have a space, stage<br>or exhibition to design?</h2><p>For scenography, theatre lighting, exhibition lighting and cultural or live-event projects, I am available for selected collaborations worldwide.</p><div class="cta-links"><a class="button button-dark" href="mailto:kareemkhaledeid@icloud.com?subject=Project%20Inquiry%20—%20Kareem%20Khaled%20Eid">Start a project conversation ↗</a><a class="text-link" href="https://www.linkedin.com/in/kareem-khaled-3069a6174/" target="_blank" rel="noopener">Connect on LinkedIn ↗</a></div></div>';
   const contact=document.querySelector('#contact');if(contact)contact.before(c);
 }
 
 const heroCopy=document.querySelector('.hero-copy');
-if(heroCopy&&!heroCopy.querySelector('.hero-availability')){
-  const availability=document.createElement('div');availability.className='hero-availability';availability.innerHTML='<i aria-hidden="true"></i><span>Available for selected projects · Egypt · Saudi Arabia · MENA</span>';heroCopy.querySelector('.hero-actions')?.after(availability);
+if(heroCopy){
+  let availability=heroCopy.querySelector('.hero-availability');
+  if(!availability){availability=document.createElement('div');availability.className='hero-availability';heroCopy.querySelector('.hero-actions')?.after(availability);}
+  availability.innerHTML='<i aria-hidden="true"></i><span>Available for projects worldwide</span>';
 }
 
 const archiveImages=[...document.querySelectorAll('.archive-photo img')];
