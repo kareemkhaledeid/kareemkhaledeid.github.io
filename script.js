@@ -3,6 +3,10 @@ const links=document.querySelector('.nav-links');
 if(toggle&&links){toggle.addEventListener('click',()=>{const open=links.classList.toggle('open');toggle.setAttribute('aria-expanded',String(open));});}
 document.querySelectorAll('.nav-links a').forEach(a=>a.addEventListener('click',()=>links?.classList.remove('open')));
 
+const enhancementStyle=document.createElement('style');
+enhancementStyle.textContent='.lightbox{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.94);display:flex;align-items:center;justify-content:center;padding:40px;opacity:0;pointer-events:none;transition:opacity .25s}.lightbox.open{opacity:1;pointer-events:auto}.lightbox img{max-width:min(1100px,92vw);max-height:82vh;width:auto;height:auto;object-fit:contain;box-shadow:0 30px 90px rgba(0,0,0,.6)}.lightbox p{position:absolute;left:40px;bottom:22px;margin:0;color:#bbb;font-size:9px;letter-spacing:.14em;text-transform:uppercase}.lightbox-close{position:absolute;right:25px;top:18px;background:none;border:0;color:#fff;font-size:34px;line-height:1;cursor:pointer}.selected-card[hidden]{display:none}@media(max-width:700px){.lightbox{padding:18px}.lightbox p{left:18px;bottom:12px;font-size:8px}}';
+document.head.appendChild(enhancementStyle);
+
 // Use the user's uploaded image as the hero visual.
 const heroImage=document.querySelector('.hero-photo img');
 if(heroImage){heroImage.src='assets/hero.jpg';heroImage.alt='Kareem Khaled Eid — selected portfolio work';heroImage.loading='eager';heroImage.fetchPriority='high';}
