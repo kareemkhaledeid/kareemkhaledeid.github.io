@@ -1,260 +1,43 @@
 (()=>{
 'use strict';
 const $=id=>document.getElementById(id);
-const ar=()=>document.documentElement.lang==='ar'||document.documentElement.dir==='rtl';
-const tr=(en,aa)=>ar()?aa:en;
-let panel=null,busy=false,state=null,worker=null;
-
-const ROLE_LABELS={
- cover:['Drawing Index / Legend','فهرس الرسومات / الرموز'],
- base:['Base Geometry','الهندسة الأساسية'],
- artwork:['Artwork Layout','توزيع الأعمال'],
- lighting:['Lighting / Ceiling','الإضاءة / السقف'],
- services:['Services RCP','خدمات السقف'],
- section:['Sections / Heights','القطاعات / الارتفاعات'],
- construction:['Installation Construction','تفاصيل التنفيذ'],
- exploded:['3D Exploded Reference','مرجع ثلاثي الأبعاد'],
- elevation:['Elevations','الواجهات'],
- plinth:['Plinth Details','تفاصيل القواعد'],
- detail:['Track / Frame Detail','تفاصيل التراك / الفريم'],
- other:['Other','أخرى']
-};
-function roleLabel(r){let x=ROLE_LABELS[r]||ROLE_LABELS.other;return tr(x[0],x[1])}
-function esc(s){return String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]))}
-function uniq(a){return [...new Set(a.filter(Boolean))]}
-function ui(){
- if(panel)return panel;
- const host=$('planStatus')?.closest('.panel')||document.querySelector('aside .panel'); if(!host)return null;
- panel=document.createElement('div'); panel.id='klsPackageVision';
- panel.style.cssText='margin-top:14px;padding:14px;border:1px solid #294052;border-radius:14px;background:#0a1620';
- panel.innerHTML=`
- <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap">
-   <strong id="kpTitle">KLS Drawing Package Intelligence</strong><span id="kpState" class="chip warn">WAITING</span>
- </div>
- <p id="kpSummary" class="tip">Upload a drawing package. KLS will classify sheets, link evidence and build one project model.</p>
- <div id="kpProgress" class="tip"></div>
- <div id="kpFacts" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));margin-top:10px"></div>
- <div id="kpModel" style="margin-top:12px"></div>
- <details style="margin-top:12px" open><summary id="kpSheetsTitle">Drawing package sheets</summary><div id="kpSheets" style="display:grid;gap:8px;margin-top:8px"></div></details>
- <div id="kpSelected" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid #294052">
-   <strong id="kpSelTitle"></strong>
-   <div id="kpSelFacts" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));margin-top:8px"></div>
-   <div id="kpEvidence" style="margin-top:8px"></div>
-   <canvas id="kpPreview" style="display:none;width:100%;max-height:430px;background:#fff;border-radius:10px;margin-top:10px"></canvas>
-   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-    <button id="kpUse" class="btn primary">Use this sheet</button>
-    <button id="kpApply" class="btn good">Apply reliable dimensions</button>
-   </div>
-   <p id="kpNote" class="tip"></p>
- </div>`;
- host.appendChild(panel);
- $('kpUse').onclick=useSheet; $('kpApply').onclick=applyDims;
- return panel;
-}
-function set(id,en,aa){let e=$(id);if(e)e.textContent=tr(en,aa)}
-function cards(id,arr){let e=$(id);if(e)e.innerHTML=arr.map(([a,b])=>`<div class="card"><small>${esc(a)}</small><strong>${esc(b)}</strong></div>`).join('')}
-function clean(s){return String(s||'').replace(/[^\x09\x0A\x0D\x20-\x7E\u0600-\u06FF]/g,' ').replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n')}
-function unitM(v,u){
- v=parseFloat(String(v).replace(',','.')); if(!Number.isFinite(v))return null; u=(u||'m').toLowerCase();
- if(u==='mm')return v/1000;if(u==='cm')return v/100;if(/ft|feet/.test(u))return v*.3048;if(/in|inch/.test(u))return v*.0254;return v
-}
-function detectScale(s){let a=[...s.matchAll(/(?:scale|sc\.?|مقياس(?: الرسم)?)?\s*1\s*[:/]\s*(\d{1,5})/gi)].map(m=>'1:'+m[1]);return uniq(a)}
-function detectDims(s){
- s=s.replace(/,/g,'.');let explicit={},pairs=[],vals=[],levels=[];
- [
-  ['w',/(?:overall\s+)?width\s*[:=\-]?\s*(\d+(?:\.\d+)?)\s*(mm|cm|m|metres?|meters?)/i],
-  ['d',/(?:overall\s+)?(?:depth|length)\s*[:=\-]?\s*(\d+(?:\.\d+)?)\s*(mm|cm|m|metres?|meters?)/i],
-  ['h',/(?:ceiling\s+)?height\s*[:=\-]?\s*(\d+(?:\.\d+)?)\s*(mm|cm|m|metres?|meters?)/i]
- ].forEach(([k,r])=>{let m=s.match(r);if(m)explicit[k]=unitM(m[1],m[2])});
- for(let m of s.matchAll(/(\d+(?:\.\d+)?)\s*(mm|cm|m)?\s*[x×]\s*(\d+(?:\.\d+)?)\s*(mm|cm|m)\b/gi)){
-  let a=unitM(m[1],m[2]||m[4]),b=unitM(m[3],m[4]);if(a>=.15&&b>=.15&&a<=250&&b<=250)pairs.push([a,b,m[0]])
- }
- for(let m of s.matchAll(/(?:^|\s)(\d{1,3}(?:\.\d{1,3})?)\s*(mm|cm|m)\b/gi)){let v=unitM(m[1],m[2]);if(v>=.15&&v<=250)vals.push(v)}
- for(let m of s.matchAll(/([+-]?\d+(?:\.\d+)?)\s*(?:FCL|FFL|LEVEL|LVL|LIGHT TRACKS?|SUSPENDED CEILING)/gi)){
-   let v=parseFloat(m[1]);if(Number.isFinite(v))levels.push({value:v,label:m[0]})
- }
- return{explicit,pairs,values:uniq(vals.map(v=>+v.toFixed(3))).slice(0,30),levels:levels.slice(0,20)}
-}
-function drawingNo(s){
- let all=[...s.matchAll(/\b([A-Z])[\s\-]?(\d{2})\b/gi)].map(m=>`${m[1].toUpperCase()}-${m[2]}`);
- return uniq(all).find(x=>/^A-\d{2}$/.test(x))||all[0]||null
-}
-function parseIndex(s){
- let out={}, lines=s.split(/\n+/).map(x=>x.trim()).filter(Boolean);
- for(let i=0;i<lines.length;i++){
-  let line=lines[i].replace(/[–—]/g,'-');
-  let m=line.match(/\b(A[\s\-]?\d{2})\b\s*[-:]?\s*(.{4,100})/i);
-  if(m){let no=m[1].toUpperCase().replace(/\s/g,'').replace(/^A(?=\d)/,'A-');out[no]=m[2].trim();continue}
-  let no=line.match(/\bA[\s\-]?\d{2}\b/i);
-  if(no && lines[i+1] && lines[i+1].length<110){
-   let k=no[0].toUpperCase().replace(/\s/g,'').replace(/^A(?=\d)/,'A-'); out[k]=lines[i+1].trim()
-  }
- }
- return out
-}
-function roleFrom(title,text,no){
- let x=(title+'\n'+text).toLowerCase();
- if(no==='A-00'||/list of drawings|symbols and linetypes|scope of work/.test(x))return'cover';
- if(/artwork layout/.test(x))return'artwork';
- if(/reflected ceiling plan.*lighting|lighting.*wire ropes|lighting plan/.test(x))return'lighting';
- if(/reflected ceiling plan.*services|services.*ceiling/.test(x))return'services';
- if(/general arrangement plan/.test(x))return'base';
- if(/main installation.*construction|wire rope connection|subfloor/.test(x))return'construction';
- if(/3d exploded|exploded view/.test(x))return'exploded';
- if(/\belevation/.test(x))return'elevation';
- if(/\bsection/.test(x))return'section';
- if(/plinth/.test(x))return'plinth';
- if(/suspended ceiling frame|junction detail|frame_\d|frame detail/.test(x))return'detail';
- return'other'
-}
-function domainOf(s){
- let x=s.toLowerCase(),scores={Exhibition:0,Theatre:0,'Live Event':0,'Film & Photography':0};
- [['Exhibition',['exhibition','gallery','museum','artwork','scenography','display','spotlight','light track']],
- ['Theatre',['theatre','stage','auditorium','foh','proscenium']],
- ['Live Event',['truss','moving head','concert','event lighting']],
- ['Film & Photography',['camera','photography','cinema','key light','fill light']]].forEach(([d,ks])=>ks.forEach(k=>{if(x.includes(k))scores[d]++}));
- let b=Object.entries(scores).sort((a,b)=>b[1]-a[1])[0];return b[1]?{name:b[0],score:b[1]}:null
-}
-function lightingTerms(s){
- const keys=['spotlight','light track','track light','conduit','lighting','wire rope','suspended ceiling','led','dmx','dali','lux','ies','ldt','wall washer','downlight'];
- return uniq(keys.filter(k=>s.toLowerCase().includes(k)))
-}
-function legendTerms(s){
- const keys=['SPOTLIGHT','LIGHT TRACK','CONDUIT','EXISTING WALL','NEW SCENOGRAPHY WALL','FIRE EXIT','SPRINKLER','WALL SOCKET','FLOOR SOCKET'];
- return uniq(keys.filter(k=>s.toUpperCase().includes(k)))
-}
-function zones(s){return uniq(s.split(/\n+/).map(x=>x.trim()).filter(x=>x.length<90&&/(zone|area|gallery|hall|room|section|installation|artwork|منطقة|قاعة)/i.test(x))).slice(0,25)}
-async function pageCanvas(page,width=1100,rotation=0){
- let rot=(page.rotate+rotation)%360,b=page.getViewport({scale:1,rotation:rot}),scale=Math.min(2.5,width/b.width),v=page.getViewport({scale,rotation:rot}),c=document.createElement('canvas');
- c.width=Math.max(1,Math.round(v.width));c.height=Math.max(1,Math.round(v.height));await page.render({canvasContext:c.getContext('2d',{alpha:false}),viewport:v}).promise;return c
-}
-function cropCanvas(src,x,y,w,h,targetW=1500){
- let c=document.createElement('canvas'),ratio=targetW/w;c.width=Math.round(w*ratio);c.height=Math.round(h*ratio);c.getContext('2d').drawImage(src,x,y,w,h,0,0,c.width,c.height);return c
-}
-async function getWorker(){
- if(worker)return worker;if(!window.Tesseract)throw Error('OCR engine unavailable');
- worker=await Tesseract.createWorker('eng',1,{logger:m=>{if(m.status&&typeof m.progress==='number')$('kpProgress').textContent=`${m.status} ${Math.round(m.progress*100)}%`}});
- return worker
-}
-async function ocr(c,label){
- $('kpProgress').textContent=label;let w=await getWorker(),r=await w.recognize(c);return{text:clean(r.data.text||''),conf:+(r.data.confidence||0)}
-}
-async function textLayer(page){let tc=await page.getTextContent();return clean(tc.items.map(i=>String(i.str||'').trim()).filter(Boolean).join('\n'))}
-function colorStats(c){
- let ctx=c.getContext('2d'),im=ctx.getImageData(0,0,c.width,c.height).data,step=Math.max(1,Math.floor((c.width*c.height)/180000)),red=0,blue=0,dark=0,total=0;
- for(let p=0;p<im.length;p+=4*step){let r=im[p],g=im[p+1],b=im[p+2];total++;if(r>130&&r>g*1.35&&r>b*1.25)red++;if(b>120&&b>r*1.2&&b>g*1.05)blue++;if(r<90&&g<90&&b<90)dark++}
- return{red:+(100*red/total).toFixed(2),blue:+(100*blue/total).toFixed(2),dark:+(100*dark/total).toFixed(2)}
-}
-function titleGuess(s,indexTitle){
- if(indexTitle&&indexTitle.length>3)return indexTitle;
- let lines=s.split(/\n+/).map(x=>x.trim()).filter(x=>x.length>=5&&x.length<110);
- let p=lines.filter(x=>/(general arrangement|artwork layout|reflected ceiling|main installation|elevation|section|plinth|suspended ceiling|frame|detail|plan)/i.test(x));
- return (p[0]||lines.find(x=>x===x.toUpperCase()&&/[A-Z]/.test(x))||lines[0]||'Untitled').replace(/\s+/g,' ')
-}
-function confidence(sheet){
- let c=30;if(sheet.no)c+=15;if(sheet.indexTitle)c+=25;if(sheet.role!=='other')c+=15;if(sheet.scales.length)c+=5;if(sheet.ocrConf>=55)c+=5;if(sheet.ocrConf>=75)c+=5;return Math.min(100,c)
-}
-function roleScore(role){return{lighting:100,base:92,artwork:90,section:78,construction:72,detail:70,elevation:60,services:55,cover:50,exploded:45,plinth:40,other:10}[role]||10}
-function buildModel(sheets,index,domain){
- let by=r=>sheets.filter(s=>s.role===r).sort((a,b)=>b.confidence-a.confidence);
- return{
-  domain:domain?.name||'Unknown',
-  index,
-  base:by('base')[0]||null, artwork:by('artwork')[0]||null, lighting:by('lighting')[0]||null,
-  services:by('services')[0]||null, sections:by('section'), construction:by('construction'), details:by('detail'),
-  elevations:by('elevation'), exploded:by('exploded')[0]||null, plinth:by('plinth')[0]||null
- }
-}
-function sheetRef(s){return s?`${s.no||'Page '+s.page} · ${s.title}`:tr('Not detected','غير مكتشف')}
-function renderModel(){
- if(!state)return;let m=state.model,rows=[
-  [tr('Base geometry','الهندسة الأساسية'),sheetRef(m.base)],
-  [tr('Artwork targets','أهداف الأعمال'),sheetRef(m.artwork)],
-  [tr('Lighting / ceiling','الإضاءة / السقف'),sheetRef(m.lighting)],
-  [tr('Vertical dimensions','الأبعاد الرأسية'),m.sections.length?m.sections.map(sheetRef).join(' | '):tr('Not detected','غير مكتشف')],
-  [tr('Installation construction','تفاصيل التنفيذ'),m.construction.length?m.construction.map(sheetRef).join(' | '):tr('Not detected','غير مكتشف')],
-  [tr('Track / frame details','تفاصيل التراك / الفريم'),m.details.length?m.details.map(sheetRef).join(' | '):tr('Not detected','غير مكتشف')]
- ];
- $('kpModel').innerHTML=`<strong>${tr('Cross-sheet project model','نموذج المشروع المترابط')}</strong><div style="display:grid;gap:6px;margin-top:8px">${rows.map(([a,b])=>`<div class="card"><small>${esc(a)}</small><strong style="font-size:12px">${esc(b)}</strong></div>`).join('')}</div>`
-}
-function renderSheets(){
- let h=$('kpSheets');if(!h||!state)return;
- h.innerHTML=state.sheets.map((s,i)=>`<button class="btn kpSheet" data-i="${i}" style="display:block;width:100%;text-align:${ar()?'right':'left'};padding:10px;border:${s===state.recommended?'1px solid #5ebd8a':'1px solid #294052'}">
- <div style="display:flex;justify-content:space-between;gap:8px"><strong>${esc(s.no||tr('Page','صفحة')+' '+s.page)} · ${esc(roleLabel(s.role))}</strong>${s===state.recommended?`<span class="chip good">${tr('PRIMARY','أساسية')}</span>`:''}</div>
- <div>${esc(s.title)}</div><small>OCR ${Math.round(s.ocrConf)}% · ${tr('Confidence','الثقة')} ${s.confidence}%${s.scales.length?' · '+s.scales.join(', '):''}</small>
- </button>`).join('');
- h.querySelectorAll('.kpSheet').forEach(b=>b.onclick=()=>selectSheet(+b.dataset.i))
-}
-async function previewSheet(s){
- let c=$('kpPreview');if(!c||!state?.doc)return;let p=await state.doc.getPage(s.page),src=await pageCanvas(p,950);c.width=src.width;c.height=src.height;c.getContext('2d').drawImage(src,0,0);c.style.display='block'
-}
-function selectSheet(i){
- if(!state)return;state.selected=i;let s=state.sheets[i];$('kpSelected').style.display='block';
- $('kpSelTitle').textContent=`${s.no||tr('Page','صفحة')+' '+s.page} — ${s.title}`;
- let d=s.dims.explicit.w&&s.dims.explicit.d?`${s.dims.explicit.w.toFixed(2)} × ${s.dims.explicit.d.toFixed(2)} m`:s.dims.pairs[0]?`${Math.max(s.dims.pairs[0][0],s.dims.pairs[0][1]).toFixed(2)} × ${Math.min(s.dims.pairs[0][0],s.dims.pairs[0][1]).toFixed(2)} m`:tr('Not reliable','غير مؤكدة');
- cards('kpSelFacts',[[tr('Role','الدور'),roleLabel(s.role)],[tr('Scale','المقياس'),s.scales.join(', ')||tr('Not found','غير موجود')],[tr('Dimensions','الأبعاد'),d],[tr('Confidence','الثقة'),s.confidence+'%'],['Red layer',s.colors.red+'%'],['Blue layer',s.colors.blue+'%']]);
- let evidence=[...s.lighting,...s.legend,...s.zones,...s.dims.levels.map(x=>x.label)].slice(0,30);
- $('kpEvidence').innerHTML=evidence.length?`<small>${tr('Evidence detected','الأدلة المكتشفة')}</small><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${evidence.map(x=>`<span class="chip">${esc(x)}</span>`).join('')}</div>`:'';
- set('kpNote','Dimensions are applied only when KLS finds an explicit overall pair. Other dimension values remain evidence for review.','يتم تطبيق الأبعاد فقط عند العثور على زوج أبعاد كلي واضح. باقي الأرقام تظل أدلة للمراجعة.');
- previewSheet(s)
-}
-function reliableDims(s){
- if(s.dims.explicit.w&&s.dims.explicit.d)return[s.dims.explicit.w,s.dims.explicit.d,s.dims.explicit.h||null];
- if(s.dims.pairs.length===1)return[Math.max(s.dims.pairs[0][0],s.dims.pairs[0][1]),Math.min(s.dims.pairs[0][0],s.dims.pairs[0][1]),null];
- return null
-}
-function applyDims(){
- if(!state)return;let s=state.sheets[state.selected],d=reliableDims(s);if(!d){alert(tr('No single reliable overall dimension pair was found on this sheet.','لم يتم العثور على زوج أبعاد كلية واحد موثوق في هذه اللوحة.'));return}
- $('w').value=d[0].toFixed(3);$('d').value=d[1].toFixed(3);if(d[2])$('h').value=d[2].toFixed(3);
- $('spaceGeometryState').textContent=tr('Drawing dimensions applied','تم تطبيق أبعاد اللوحة');$('spaceConfidence').textContent=tr('Confidence: reviewed','درجة الثقة: بعد المراجعة');
- $('smartDims').textContent=tr(`Applied ${d[0].toFixed(2)} × ${d[1].toFixed(2)} m from ${s.no||'selected sheet'}`,`تم تطبيق ${d[0].toFixed(2)} × ${d[1].toFixed(2)} م من ${s.no||'اللوحة المختارة'}`)
-}
-function useSheet(){
- if(!state)return;let s=state.sheets[state.selected];$('smartSpace').textContent=tr(`Using ${s.no||'page '+s.page}: ${s.title}`,`يتم استخدام ${s.no||'الصفحة '+s.page}: ${s.title}`);
- $('spaceGeometryState').textContent=tr('Sheet selected / geometry review','تم اختيار اللوحة / مراجعة الهندسة');
- if($('approveGeom'))$('approveGeom').checked=false;
- if(s.role==='lighting'||s.role==='base')applyDims()
-}
-async function analyse(file){
- if(busy)return;busy=true;ui();panel.style.display='block';set('kpState','READING','جاري القراءة');$('kpState').className='chip warn';
- set('kpSummary','Building drawing index, classifying sheets, reading title blocks, scales, dimensions and lighting evidence…','جاري بناء فهرس الرسومات وتصنيف اللوحات وقراءة العناوين والمقاييس والأبعاد وأدلة الإضاءة…');
- $('kpSheets').innerHTML='';$('kpSelected').style.display='none';
- try{
-  if(!window.pdfjsLib)throw Error('PDF.js unavailable');pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-  let data=new Uint8Array(await file.arrayBuffer()),doc=await pdfjsLib.getDocument({data}).promise,pages=[],index={},packageText='';
-  for(let i=1;i<=doc.numPages;i++){
-   $('kpProgress').textContent=tr(`Pass 1 · page ${i}/${doc.numPages}`,`المرحلة ١ · الصفحة ${i}/${doc.numPages}`);
-   let p=await doc.getPage(i),layer=await textLayer(p),fullCanvas=await pageCanvas(p,1050),fullText=layer,fullConf=layer.length>30?100:0;
-   if(layer.replace(/\s/g,'').length<30){let r=await ocr(fullCanvas,tr(`OCR page ${i}/${doc.numPages}`,`OCR الصفحة ${i}/${doc.numPages}`));fullText=r.text;fullConf=r.conf}
-   let y=Math.floor(fullCanvas.height*.68), h=fullCanvas.height-y, crop= cropCanvas(fullCanvas,Math.floor(fullCanvas.width*.45),y,Math.floor(fullCanvas.width*.55),h,1500);
-   let cr=await ocr(crop,tr(`Title block ${i}/${doc.numPages}`,`بلوك العنوان ${i}/${doc.numPages}`));
-   let text=clean(fullText+'\n'+cr.text);packageText+='\n'+text;
-   let no=drawingNo(cr.text)||drawingNo(text),scales=detectScale(text),dims=detectDims(text),colors=colorStats(fullCanvas);
-   pages.push({page:i,no,text,ocrConf:Math.max(fullConf,cr.conf),scales,dims,colors,lighting:lightingTerms(text),legend:legendTerms(text),zones:zones(text),cropText:cr.text})
-   if(i===1){index=parseIndex(text)}
-  }
-  if(Object.keys(index).length<4)index={...index,...parseIndex(packageText)};
-  pages.forEach(s=>{
-    s.indexTitle=s.no&&index[s.no]?index[s.no]:null;s.title=titleGuess(s.cropText+'\n'+s.text,s.indexTitle);s.role=roleFrom(s.title,s.text,s.no);s.confidence=confidence(s)
-  });
-  let domain=domainOf(packageText),model=buildModel(pages,index,domain);
-  let recommended=model.lighting||model.base||model.artwork||pages.slice().sort((a,b)=>roleScore(b.role)-roleScore(a.role)||b.confidence-a.confidence)[0];
-  state={doc,sheets:pages,index,model,recommended,selected:pages.indexOf(recommended)};
-  set('kpState','READY','جاهز');$('kpState').className='chip good';$('kpProgress').textContent='';
-  cards('kpFacts',[[tr('Sheets','اللوحات'),doc.numPages],[tr('Index entries','بنود الفهرس'),Object.keys(index).length],[tr('Domain','المجال'),domain?.name||tr('Uncertain','غير مؤكد')],[tr('Base plan','المخطط الأساسي'),model.base?.no||'—'],[tr('Lighting sheet','لوحة الإضاءة'),model.lighting?.no||'—'],[tr('Artwork sheet','لوحة الأعمال'),model.artwork?.no||'—']]);
-  renderModel();renderSheets();selectSheet(state.selected);
-  let msg=`KLS linked ${doc.numPages} sheets into one project model. ${model.base?model.base.no+' base geometry. ':''}${model.artwork?model.artwork.no+' artwork. ':''}${model.lighting?model.lighting.no+' lighting/ceiling. ':''}${model.sections.length?model.sections.map(x=>x.no).filter(Boolean).join('/')+' sections. ':''}`;
-  let msgAr=`ربط KLS عدد ${doc.numPages} لوحة في نموذج مشروع واحد. ${model.base?'الهندسة الأساسية '+model.base.no+'. ':''}${model.artwork?'الأعمال '+model.artwork.no+'. ':''}${model.lighting?'الإضاءة/السقف '+model.lighting.no+'. ':''}${model.sections.length?'القطاعات '+model.sections.map(x=>x.no).filter(Boolean).join('/')+'. ':''}`;
-  set('kpSummary',msg,msgAr);
-  if(domain&&domain.score>=2&&$('mode')){$('mode').value=domain.name;$('mode').dispatchEvent(new Event('change',{bubbles:true}))}
-  $('smartSpace').textContent=tr(`Drawing package understood · ${doc.numPages} sheets`,`تم فهم حزمة الرسومات · ${doc.numPages} لوحة`);
-  $('spaceGeometryState').textContent=tr('Cross-sheet model / review','نموذج مترابط / مراجعة');
-  $('spaceConfidence').textContent=tr('Confidence: mixed','درجة الثقة: مختلطة');
- }catch(e){
-  console.error(e);set('kpState','ERROR','خطأ');set('kpSummary',`Analysis failed: ${e.message||e}`,`تعذر التحليل: ${e.message||e}`)
- }finally{busy=false}
-}
-function onFile(ev){let f=ev.target.files?.[0];if(!f)return;let ext=(f.name.split('.').pop()||'').toLowerCase();if(ext==='pdf'||f.type==='application/pdf')analyse(f)}
-function boot(){ui();let i=$('spaceFileNative');if(i){i.addEventListener('change',onFile);i.addEventListener('input',onFile)}}
+const isAr=()=>document.documentElement.lang==='ar'||document.documentElement.dir==='rtl';
+const tr=(en,ar)=>isAr()?ar:en;
+const esc=s=>String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+const uniq=a=>[...new Set(a.filter(Boolean))];
+let panel=null,busy=false,state=null,ocrWorker=null;
+function makeUI(){if(panel)return panel;const host=$('planStatus')?.closest('.panel')||document.querySelector('aside .panel');if(!host)return null;panel=document.createElement('div');panel.id='planVisionV17';panel.style.cssText='margin-top:14px;padding:14px;border:1px solid #26394a;border-radius:16px;background:#0a151f';panel.innerHTML=`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap"><strong id="pvTitle">KLS Drawing Package Intelligence</strong><span id="pvState" class="chip warn">WAITING</span></div><p id="pvSummary" class="tip">Upload a drawing package. KLS will read the sheet index first, classify every sheet, then build one cross-sheet project model.</p><div id="pvProgress" class="tip"></div><div id="pvFacts" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(125px,1fr));margin-top:10px"></div><div id="pvModel" style="display:none;margin-top:12px;padding:12px;border:1px solid #26394a;border-radius:12px"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap"><strong id="pvModelTitle">Cross-sheet project model</strong><span id="pvModelConfidence" class="chip warn">REVIEW</span></div><div id="pvRoles" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(145px,1fr));margin-top:8px"></div><div id="pvEvidence" style="margin-top:8px"></div><button id="pvUseModel" class="btn primary" style="margin-top:10px">Use recommended package model</button></div><details open style="margin-top:12px"><summary id="pvSheetsLabel">Detected sheets</summary><div id="pvPages" style="display:grid;gap:8px;margin-top:8px"></div></details><div id="pvSelection" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid #26394a"><strong id="pvSelTitle"></strong><div id="pvSelFacts" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(125px,1fr));margin-top:8px"></div><canvas id="pvPreview" style="display:none;width:100%;max-height:460px;background:#fff;border-radius:10px;margin-top:10px"></canvas><div id="pvDetected" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"></div><div id="pvVisualFacts" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));margin-top:8px"></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button id="pvApply" class="btn good">Apply reliable dimensions</button><button id="pvUse" class="btn primary">Use this sheet as plan</button></div><p id="pvNote" class="tip"></p></div>`;host.appendChild(panel);$('pvApply').onclick=applyDimensions;$('pvUse').onclick=useSheet;$('pvUseModel').onclick=useModel;return panel}
+function setText(id,en,ar){const e=$(id);if(e)e.textContent=tr(en,ar)}
+function cards(id,arr){const e=$(id);if(e)e.innerHTML=arr.map(([a,b])=>`<div class="card"><small>${esc(a)}</small><strong>${esc(b)}</strong></div>`).join('')}
+function mFrom(v,u){v=parseFloat(String(v).replace(',','.'));if(!Number.isFinite(v))return null;u=(u||'m').toLowerCase();if(u==='mm')return v/1000;if(u==='cm')return v/100;if(/ft|feet/.test(u))return v*.3048;if(/in|inch/.test(u))return v*.0254;return v}
+function detectDims(text){const s=text.replace(/,/g,'.'),o={explicit:{},pairs:[],values:[]};const labels=[['w',/(?:overall\s+)?(?:width|عرض)\s*[:=\-]?\s*(\d+(?:\.\d+)?)\s*(mm|cm|m|metres?|meters?)/i],['d',/(?:overall\s+)?(?:depth|length|عمق|طول)\s*[:=\-]?\s*(\d+(?:\.\d+)?)\s*(mm|cm|m|metres?|meters?)/i],['h',/(?:ceiling\s+)?(?:height|ارتفاع)\s*[:=\-]?\s*(\d+(?:\.\d+)?)\s*(mm|cm|m|metres?|meters?)/i]];labels.forEach(([k,r])=>{const m=s.match(r);if(m)o.explicit[k]=mFrom(m[1],m[2])});for(const m of s.matchAll(/(\d+(?:\.\d+)?)\s*(mm|cm|m)?\s*[x×]\s*(\d+(?:\.\d+)?)\s*(mm|cm|m)\b/gi)){const a=mFrom(m[1],m[2]||m[4]),b=mFrom(m[3],m[4]);if(a>=.2&&a<=250&&b>=.2&&b<=250)o.pairs.push([a,b,m[0]])}for(const m of s.matchAll(/(?:^|[\s=:])(\d+(?:\.\d+)?)\s*(mm|cm|m)\b/gi)){const v=mFrom(m[1],m[2]);if(v>=.2&&v<=250)o.values.push(Math.round(v*1000)/1000)}o.values=uniq(o.values).slice(0,30);return o}
+function detectScale(text){return uniq([...text.matchAll(/(?:scale\s*)?1\s*[:/]\s*(\d{1,5})/gi)].map(m=>'1:'+m[1]))}
+function classifyTitle(title,text=''){const x=(title+'\n'+text).toLowerCase(),rules=[['Cover / Drawing Index',['list of drawings','scope of work','architectural symbols','drawing index']],['General Arrangement',['general arrangement plan','general arrangement']],['Artwork Layout',['artwork layout plan','artwork layout']],['RCP Services',['reflected ceiling plan - services','reflected ceiling plan services','rcp services']],['Lighting RCP',['reflected ceiling plan - lighting','lighting, wire ropes','lighting plan','lighting layout','light track']],['Sections',['sections','section uu','section vv','section xx','section yy','section zz']],['Installation Construction',['main installation construction detail','wire rope connection detail','main installation plan - wire rope','main installation plan - subfloor']],['3D Exploded',['main installation 3d exploded view','3d exploded view','exploded view']],['Elevations',['elevations','elevation a','elevation b','elevation c','elevation d']],['Plinth Details',['plinth details','plinth']],['Suspended Ceiling Detail',['suspended ceiling frame junction detail','suspended ceiling frame','frame junction detail']],['Detail',['detail','details']]];let best=['Unknown',0];for(const [name,keys] of rules){let score=0;for(const k of keys)if(x.includes(k))score+=k.length>15?4:2;if(score>best[1])best=[name,score]}return{name:best[0],score:best[1]}}
+function roleFor(type,title){const x=(type+' '+title).toLowerCase();if(/general arrangement/.test(x))return'base';if(/artwork layout/.test(x))return'artwork';if(/lighting rcp|reflected ceiling.*lighting|lighting plan/.test(x))return'lighting';if(/sections/.test(x))return'vertical';if(/installation construction|wire rope|subfloor/.test(x))return'construction';if(/3d exploded/.test(x))return'assembly3d';if(/elevation/.test(x))return'elevation';if(/suspended ceiling detail|junction/.test(x))return'mounting';if(/cover|index/.test(x))return'index';return'other'}
+function parseSheetIndex(text){const lines=text.replace(/[–—]/g,'-').replace(/\r/g,'').split(/\n+/).map(s=>s.replace(/\s+/g,' ').trim()).filter(Boolean),map={};for(let i=0;i<lines.length;i++){let line=lines[i].replace(/\bA[- ]?O\b/gi,'A-0').replace(/\bA[- ]?I\b/gi,'A-1'),m=line.match(/\b([A-Z])\s*[- ]?\s*(\d{1,2})\b\s*[-:–—]?\s*(.*)$/i);if(!m)continue;let code=m[1].toUpperCase()+'-'+m[2].padStart(2,'0'),title=(m[3]||'').trim();if(title.length<5&&lines[i+1]&&!/\b[A-Z]\s*[- ]?\s*\d{1,2}\b/.test(lines[i+1]))title=(title+' '+lines[i+1]).trim();if(title.length>=4&&title.length<120)map[code]=title}return map}
+function guessSheet(text,page,indexMap,total){const direct=[...text.matchAll(/\b([A-Z])\s*[- ]\s*(\d{2})\b/gi)].map(m=>m[1].toUpperCase()+'-'+m[2]);for(const c of direct)if(indexMap[c])return c;const keys=Object.keys(indexMap).sort((a,b)=>parseInt(a.split('-')[1])-parseInt(b.split('-')[1]));if(keys.length===total)return keys[page-1]||null;return direct[0]||null}
+function domain(text){const x=text.toLowerCase(),scores={Exhibition:0,Theatre:0,'Live Event':0,'Film & Photography':0};[['Exhibition',['exhibition','museum','gallery','artwork','plinth','display','track light','معرض','متحف']],['Theatre',['theatre','theater','stage','auditorium','foh','proscenium','مسرح']],['Live Event',['truss','concert','moving head','event lighting','فعالية']],['Film & Photography',['camera','photography','cinema','key light','fill light','تصوير']]].forEach(([d,ks])=>ks.forEach(k=>{if(x.includes(k))scores[d]++}));const b=Object.entries(scores).sort((a,b)=>b[1]-a[1])[0];return b&&b[1]?{name:b[0],score:b[1]}:null}
+function lightingTerms(text){const ks=['spotlight','light track','track light','downlight','wall washer','wallwasher','led','ies','ldt','lux','dmx','dali','conduit','wire rope','suspended ceiling','سبوت','تراك لايت','لوكس','إضاءة'];return uniq(ks.filter(k=>text.toLowerCase().includes(k)))}
+function zones(text){return uniq(text.split(/\n+/).map(s=>s.trim()).filter(s=>s.length<90&&/(zone|area|gallery|hall|room|section|منطقة|قاعة|غرفة)\b/i.test(s))).slice(0,20)}
+async function render(page,targetW=1500,rotation=0){const rot=(page.rotate+rotation)%360,base=page.getViewport({scale:1,rotation:rot}),scale=Math.min(3,targetW/base.width),vp=page.getViewport({scale,rotation:rot}),c=document.createElement('canvas');c.width=Math.max(1,Math.round(vp.width));c.height=Math.max(1,Math.round(vp.height));await page.render({canvasContext:c.getContext('2d',{alpha:false}),viewport:vp}).promise;return c}
+function crop(src,x,y,w,h){const c=document.createElement('canvas');c.width=Math.max(1,Math.round(src.width*w));c.height=Math.max(1,Math.round(src.height*h));c.getContext('2d').drawImage(src,src.width*x,src.height*y,src.width*w,src.height*h,0,0,c.width,c.height);return c}
+async function worker(){if(ocrWorker)return ocrWorker;if(!window.Tesseract)throw Error('OCR engine unavailable');ocrWorker=await Tesseract.createWorker('eng',1,{logger:m=>{if(m.status&&typeof m.progress==='number')$('pvProgress').textContent=`${m.status} ${Math.round(m.progress*100)}%`}});return ocrWorker}
+async function ocr(canvas,label){$('pvProgress').textContent=label;const w=await worker(),r=await w.recognize(canvas);return{text:String(r.data.text||'').trim(),confidence:+(r.data.confidence||0)}}
+async function textLayer(page){const tc=await page.getTextContent();return tc.items.map(i=>String(i.str||'').trim()).filter(Boolean).join('\n')}
+async function readPageSmart(page,pageNo,total,indexMap){const native=await textLayer(page);let method='PDF text',conf=100,text=native,preview=null;if(native.replace(/\s/g,'').length<40){method='OCR regions';const full=await render(page,1650);preview=full;const bottom=crop(full,0,.72,1,.28),rightBottom=crop(full,.62,.62,.38,.38),rb=await ocr(rightBottom,tr(`Title block ${pageNo}/${total}`,`بلوك العنوان ${pageNo}/${total}`)),bt=await ocr(bottom,tr(`Drawing title ${pageNo}/${total}`,`عنوان الرسم ${pageNo}/${total}`));text=(bt.text+'\n'+rb.text).trim();conf=(bt.confidence+rb.confidence)/2;if(text.replace(/\s/g,'').length<60){const low=document.createElement('canvas'),ctx=low.getContext('2d'),sc=Math.min(1,1050/full.width);low.width=Math.round(full.width*sc);low.height=Math.round(full.height*sc);ctx.drawImage(full,0,0,low.width,low.height);const wh=await ocr(low,tr(`Sheet scan ${pageNo}/${total}`,`مسح اللوحة ${pageNo}/${total}`));text=(text+'\n'+wh.text).trim();conf=(conf*2+wh.confidence)/3}}const sheet=guessSheet(text,pageNo,indexMap,total),indexedTitle=sheet&&indexMap[sheet]?indexMap[sheet]:null,title=indexedTitle||bestTitle(text)||`Page ${pageNo}`,type=classifyTitle(title,text),scales=detectScale(text),dims=detectDims(text);return{page:pageNo,sheet,title,type,role:roleFor(type.name,title),method,confidence:conf,text,scales,dims,lighting:lightingTerms(text),zones:zones(text),preview}}
+function bestTitle(text){const lines=text.split(/\n+/).map(s=>s.replace(/\s+/g,' ').trim()).filter(s=>s.length>=5&&s.length<100),p=lines.filter(s=>/(plan|elevation|section|detail|layout|installation|ceiling|drawing|مخطط|واجهة|قطاع)/i.test(s));return(p[0]||lines.find(s=>s===s.toUpperCase()&&/[A-Z]/.test(s))||lines[0]||'Untitled').replace(/\s+/g,' ')}
+function pageScore(p){let s=0;if(p.role==='lighting')s+=30;if(p.role==='base')s+=22;if(p.role==='artwork')s+=15;if(p.role==='mounting')s+=8;if(p.scales.length)s+=3;if(p.dims.values.length>=2||p.dims.pairs.length)s+=4;if(p.role==='vertical'||p.role==='construction'||p.role==='elevation')s-=2;return s}
+function colorStats(canvas){if(!canvas)return{red:0,blue:0,black:0,redComponents:0};const maxW=800,sc=Math.min(1,maxW/canvas.width),c=document.createElement('canvas');c.width=Math.max(1,Math.round(canvas.width*sc));c.height=Math.max(1,Math.round(canvas.height*sc));const ctx=c.getContext('2d');ctx.drawImage(canvas,0,0,c.width,c.height);const d=ctx.getImageData(0,0,c.width,c.height).data;let red=0,blue=0,black=0;const mask=new Uint8Array(c.width*c.height);for(let i=0,p=0;i<d.length;i+=4,p++){const r=d[i],g=d[i+1],b=d[i+2];if(r>145&&r>g*1.35&&r>b*1.25){red++;mask[p]=1}if(b>130&&b>r*1.15&&b>g*1.05)blue++;if(r<75&&g<75&&b<75)black++}let comps=0;const seen=new Uint8Array(mask.length),W=c.width,stack=[];for(let p=0;p<mask.length;p++)if(mask[p]&&!seen[p]){let n=0;seen[p]=1;stack.push(p);while(stack.length){const q=stack.pop();n++;const x=q%W;for(const z of[q-1,q+1,q-W,q+W])if(z>=0&&z<mask.length&&!seen[z]&&mask[z]&&Math.abs((z%W)-x)<=1){seen[z]=1;stack.push(z)}}if(n>=3&&n<=350)comps++}const total=c.width*c.height;return{red:red/total,blue:blue/total,black:black/total,redComponents:comps}}
+function buildModel(pages,indexMap){const byRole={};for(const p of pages)if(p.role!=='other'&&!byRole[p.role])byRole[p.role]=p;const evidence=[],add=(label,role)=>{if(byRole[role])evidence.push(`${label}: ${byRole[role].sheet||'P'+byRole[role].page} — ${byRole[role].title}`)};add('Base geometry','base');add('Artwork targets','artwork');add('Lighting / ceiling','lighting');add('Vertical dimensions','vertical');add('Construction','construction');add('3D assembly','assembly3d');add('Elevations','elevation');add('Track mounting','mounting');let score=0;['base','artwork','lighting','vertical','construction','mounting'].forEach(r=>{if(byRole[r])score++});const confidence=score>=5?'high':score>=3?'medium':'low';return{byRole,evidence,confidence,indexCount:Object.keys(indexMap).length}}
+function showPreview(canvas){const out=$('pvPreview');if(!out||!canvas){if(out)out.style.display='none';return}out.width=canvas.width;out.height=canvas.height;out.getContext('2d').drawImage(canvas,0,0);out.style.display='block'}
+function renderPages(){const h=$('pvPages');if(!h||!state)return;h.innerHTML=state.pages.map((p,i)=>`<button class="btn pvSheet" data-i="${i}" style="display:block;width:100%;text-align:${isAr()?'right':'left'};padding:10px;border:${i===state.selected?'1px solid #75d7ff':p.role==='lighting'?'1px solid #5ebd8a':'1px solid #26394a'}"><div style="display:flex;justify-content:space-between;gap:8px"><strong>${esc(p.sheet||tr('Page '+p.page,'صفحة '+p.page))}</strong><span class="chip">${esc(p.role)}</span></div><div>${esc(p.title)}</div><small>${esc(p.type.name)} · ${esc(p.method)} ${Math.round(p.confidence)}%${p.scales[0]?' · '+esc(p.scales.join(', ')):''}</small></button>`).join('');h.querySelectorAll('.pvSheet').forEach(b=>b.onclick=()=>selectSheet(+b.dataset.i))}
+async function selectSheet(i){if(!state)return;state.selected=i;renderPages();const p=state.pages[i];$('pvSelection').style.display='block';$('pvSelTitle').textContent=`${p.sheet||tr('Page '+p.page,'صفحة '+p.page)} — ${p.title}`;const d=p.dims.explicit.w&&p.dims.explicit.d?`${p.dims.explicit.w.toFixed(2)} × ${p.dims.explicit.d.toFixed(2)} m`:p.dims.pairs[0]?`${Math.max(p.dims.pairs[0][0],p.dims.pairs[0][1]).toFixed(2)} × ${Math.min(p.dims.pairs[0][0],p.dims.pairs[0][1]).toFixed(2)} m`:tr('Not reliable','غير مؤكدة');cards('pvSelFacts',[[tr('Role','الدور'),p.role],[tr('Type','النوع'),p.type.name],[tr('Scale(s)','المقياس'),p.scales.join(', ')||tr('Not found','غير موجود')],[tr('Dimensions','الأبعاد'),d],[tr('Reader','القراءة'),`${p.method} ${Math.round(p.confidence)}%`]]);$('pvDetected').innerHTML=[...p.lighting,...p.zones].slice(0,24).map(x=>`<span class="chip">${esc(x)}</span>`).join('');if(!p.preview&&state.doc){const pg=await state.doc.getPage(p.page);p.preview=await render(pg,1300)}showPreview(p.preview);const cs=colorStats(p.preview);p.color=cs;cards('pvVisualFacts',[[tr('Red layer','الطبقة الحمراء'),(cs.red*100).toFixed(2)+'%'],[tr('Blue dimensions','طبقة الأبعاد الزرقاء'),(cs.blue*100).toFixed(2)+'%'],[tr('Dark geometry','الهندسة الداكنة'),(cs.black*100).toFixed(2)+'%'],[tr('Red symbol candidates','مرشحات الرموز الحمراء'),cs.redComponents]]);setText('pvNote','Color layers are treated as evidence only; KLS will not call a symbol a spotlight until it is consistent with the sheet legend or repeated geometry.','تُستخدم طبقات الألوان كدليل فقط؛ لن يعتبر KLS أي رمز سبوت لايت إلا إذا تطابق مع مفتاح الرموز أو تكرر هندسيًا بشكل موثوق.')}
+function applyDimensions(){if(!state)return;const p=state.pages[state.selected];let w,d,h=p.dims.explicit.h||null;if(p.dims.explicit.w&&p.dims.explicit.d){w=p.dims.explicit.w;d=p.dims.explicit.d}else if(p.dims.pairs[0]){w=Math.max(p.dims.pairs[0][0],p.dims.pairs[0][1]);d=Math.min(p.dims.pairs[0][0],p.dims.pairs[0][1])}if(!w||!d){alert(tr('No reliable overall width/depth pair was found on this sheet.','لم يتم العثور على زوج موثوق للعرض والعمق في هذه اللوحة.'));return}$('w').value=w.toFixed(3);$('d').value=d.toFixed(3);if(h)$('h').value=h.toFixed(3);$('smartDims').textContent=tr(`Applied ${w.toFixed(2)} × ${d.toFixed(2)} m from ${p.sheet||'selected sheet'}`,`تم تطبيق ${w.toFixed(2)} × ${d.toFixed(2)} م من ${p.sheet||'اللوحة المختارة'}`);$('spaceGeometryState').textContent=tr('Dimensions applied / review','تم تطبيق الأبعاد / مراجعة')}
+function useSheet(){if(!state)return;const p=state.pages[state.selected];$('smartSpace').textContent=tr(`Using ${p.sheet||'page '+p.page}: ${p.title}`,`استخدام ${p.sheet||'الصفحة '+p.page}: ${p.title}`);$('spaceGeometryState').textContent=tr('Sheet selected / geometry review','تم اختيار اللوحة / مراجعة الهندسة');if($('approveGeom'))$('approveGeom').checked=false;if(p.role==='lighting'||p.role==='base')applyDimensions()}
+function useModel(){if(!state)return;const m=state.model,base=m.byRole.base,light=m.byRole.lighting;if($('mode')){$('mode').value='Exhibition';$('mode').dispatchEvent(new Event('change',{bubbles:true}))}$('smartSpace').textContent=tr(`Cross-sheet model ready · base ${base?.sheet||'review'} · lighting ${light?.sheet||'review'}`,`نموذج متعدد اللوحات جاهز · الأساس ${base?.sheet||'مراجعة'} · الإضاءة ${light?.sheet||'مراجعة'}`);$('spaceGeometryState').textContent=tr('Cross-sheet model / review required','نموذج متعدد اللوحات / يحتاج مراجعة');$('spaceConfidence').textContent=tr('Confidence: '+m.confidence,'درجة الثقة: '+(m.confidence==='high'?'مرتفعة':m.confidence==='medium'?'متوسطة':'منخفضة'));if(base){state.selected=state.pages.indexOf(base);selectSheet(state.selected)}}
+function renderModel(){const m=state.model;$('pvModel').style.display='block';$('pvModelConfidence').textContent=m.confidence.toUpperCase();$('pvModelConfidence').className='chip '+(m.confidence==='high'?'good':'warn');const r=m.byRole;cards('pvRoles',[[tr('Base geometry','الهندسة الأساسية'),r.base?.sheet||'—'],[tr('Artwork targets','أهداف الأعمال'),r.artwork?.sheet||'—'],[tr('Lighting / ceiling','الإضاءة / السقف'),r.lighting?.sheet||'—'],[tr('Vertical dimensions','الأبعاد الرأسية'),r.vertical?.sheet||'—'],[tr('Construction','التنفيذ'),r.construction?.sheet||'—'],[tr('Mounting detail','تفصيلة التركيب'),r.mounting?.sheet||'—'],[tr('Elevations','الواجهات'),r.elevation?.sheet||'—'],[tr('3D assembly','التجميع ثلاثي الأبعاد'),r.assembly3d?.sheet||'—']]);$('pvEvidence').innerHTML=m.evidence.map(x=>`<div class="tip">• ${esc(x)}</div>`).join('')}
+async function analyse(file){if(busy)return;busy=true;makeUI();panel.style.display='block';setText('pvState','READING','جاري القراءة');$('pvState').className='chip warn';setText('pvSummary','Reading the drawing index, title blocks and sheet roles…','جاري قراءة فهرس اللوحات وبلوكات العناوين وأدوار الصفحات…');$('pvPages').innerHTML='';$('pvModel').style.display='none';$('pvSelection').style.display='none';try{if(!window.pdfjsLib)throw Error('PDF engine unavailable');pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';const data=new Uint8Array(await file.arrayBuffer()),doc=await pdfjsLib.getDocument({data}).promise;const first=await doc.getPage(1),native1=await textLayer(first);let indexText=native1,indexConf=100;if(native1.replace(/\s/g,'').length<80){const c=await render(first,1900),r=await ocr(c,tr('Reading drawing index / legend…','جاري قراءة فهرس الرسومات ومفتاح الرموز…'));indexText=r.text;indexConf=r.confidence}const indexMap=parseSheetIndex(indexText),pages=[];for(let i=1;i<=doc.numPages;i++){setText('pvSummary',`Understanding sheet ${i} of ${doc.numPages}…`,`جاري فهم اللوحة ${i} من ${doc.numPages}…`);const pg=await doc.getPage(i),rec=await readPageSmart(pg,i,doc.numPages,indexMap);rec.score=pageScore(rec);pages.push(rec)}const model=buildModel(pages,indexMap),dom=domain(indexText+'\n'+pages.map(p=>p.text).join('\n'));state={doc,pages,indexMap,indexText,indexConf,model,selected:Math.max(0,pages.findIndex(p=>p.role==='lighting'))};if(state.selected<0)state.selected=pages.reduce((bi,p,i,a)=>p.score>a[bi].score?i:bi,0);setText('pvState','READY','جاهز');$('pvState').className='chip good';$('pvProgress').textContent='';cards('pvFacts',[[tr('Sheets','اللوحات'),doc.numPages],[tr('Index entries','عناصر الفهرس'),Object.keys(indexMap).length],[tr('Project domain','مجال المشروع'),dom?.name||tr('Review','مراجعة')],[tr('Model confidence','ثقة النموذج'),model.confidence],[tr('Lighting sheet','لوحة الإضاءة'),model.byRole.lighting?.sheet||tr('Not found','غير موجود')],[tr('Base plan','المخطط الأساسي'),model.byRole.base?.sheet||tr('Not found','غير موجود')]]);setText('pvSummary',`KLS built one project model from ${doc.numPages} sheets. It found ${Object.keys(indexMap).length} drawing-index entries and linked the available plans by role. Review evidence before generating lighting.`,`بنى KLS نموذج مشروع واحد من ${doc.numPages} لوحة. تم العثور على ${Object.keys(indexMap).length} عنصرًا في فهرس الرسومات وربط اللوحات المتاحة حسب دورها. راجع الأدلة قبل توليد الإضاءة.`);if(dom&&dom.score>=2&&$('mode')){$('mode').value=dom.name;$('mode').dispatchEvent(new Event('change',{bubbles:true}))}renderModel();renderPages();await selectSheet(state.selected);$('smartSpace').textContent=tr(`Drawing package understood · ${doc.numPages} sheets`,`تم فهم حزمة الرسومات · ${doc.numPages} لوحة`);$('spaceGeometryState').textContent=tr('Cross-sheet model / review','نموذج متعدد اللوحات / مراجعة');$('spaceConfidence').textContent=tr('Confidence: '+model.confidence,'درجة الثقة: '+(model.confidence==='high'?'مرتفعة':model.confidence==='medium'?'متوسطة':'منخفضة'))}catch(e){console.error(e);setText('pvState','ERROR','خطأ');setText('pvSummary',`Could not analyse drawing package: ${e.message||e}`,`تعذر تحليل حزمة الرسومات: ${e.message||e}`)}finally{busy=false}}
+function onFile(ev){const f=ev.target.files?.[0];if(!f)return;const ex=(f.name.split('.').pop()||'').toLowerCase();if(ex==='pdf'||f.type==='application/pdf')analyse(f)}
+function boot(){makeUI();const i=$('spaceFileNative');if(i){i.addEventListener('change',onFile);i.addEventListener('input',onFile)}}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
 })();
