@@ -3,171 +3,24 @@
 const $=id=>document.getElementById(id);
 const isAr=()=>document.documentElement.dir==='rtl'||document.documentElement.lang==='ar';
 const tr=(en,ar)=>isAr()?ar:en;
-const esc=s=>String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+const esc=s=>String(s??'').replace(/[&<>\"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[m]));
 let file=null,doc=null,busy=false,result=null;
-
-function ui(){
-  let b=$('klsGeomFeatures');
-  if(b)return b;
-  const host=$('klsDeepDimensions')||$('pvSelection')||$('planStatus')?.closest('.panel');
-  if(!host)return null;
-  b=document.createElement('div');
-  b.id='klsGeomFeatures';
-  b.style.cssText='margin-top:12px;padding:12px;border:1px solid #31506a;border-radius:14px;background:#0a151f';
-  b.innerHTML=`
-  <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap">
-    <strong>${tr('KLS Geometry + Lighting Feature Reader v23','قارئ الهندسة وعناصر الإضاءة v23')}</strong>
-    <span id="g23State" class="chip warn">${tr('WAITING','انتظار')}</span>
-  </div>
-  <p id="g23Summary" class="tip">${tr('Builds a normalized A-01 wall envelope, detects candidate red lighting/suspension symbols on A-04, and keeps every detection as reviewable evidence.','يبني حدود الحوائط المعيارية من A-01، ويكتشف مرشحات رموز الإضاءة/التعليق الحمراء في A-04، ويحفظ كل اكتشاف كدليل قابل للمراجعة.')}</p>
-  <div id="g23Facts" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(135px,1fr));margin-top:8px"></div>
-  <canvas id="g23Preview" style="display:none;width:100%;max-height:480px;background:#fff;border-radius:10px;margin-top:10px"></canvas>
-  <div id="g23Segments" style="margin-top:10px"></div>
-  <div id="g23Evidence" style="margin-top:8px"></div>
-  <button id="g23Apply" class="btn good" style="margin-top:8px">${tr('Use detected plan geometry','استخدام هندسة المخطط المكتشفة')}</button>`;
-  host.appendChild(b);
-  $('g23Apply').onclick=apply;
-  return b;
-}
-function cards(items){
-  const h=$('g23Facts');
-  if(h)h.innerHTML=items.map(([a,b])=>`<div class="card"><small>${esc(a)}</small><strong>${esc(b)}</strong></div>`).join('');
-}
-async function render(page,target=2200){
-  const base=page.getViewport({scale:1}),s=Math.min(4,target/base.width),vp=page.getViewport({scale:s});
-  const c=document.createElement('canvas'); c.width=Math.round(vp.width);c.height=Math.round(vp.height);
-  await page.render({canvasContext:c.getContext('2d',{alpha:false}),viewport:vp}).promise; return c;
-}
-function downsample(src,maxW=1050){
-  const s=Math.min(1,maxW/src.width),c=document.createElement('canvas');
-  c.width=Math.max(1,Math.round(src.width*s));c.height=Math.max(1,Math.round(src.height*s));
-  c.getContext('2d').drawImage(src,0,0,c.width,c.height); return c;
-}
-function imageData(c){return c.getContext('2d').getImageData(0,0,c.width,c.height).data}
-function darkMask(c){
-  const d=imageData(c),m=new Uint8Array(c.width*c.height);
-  for(let i=0,p=0;i<d.length;i+=4,p++){
-    const r=d[i],g=d[i+1],b=d[i+2];
-    if(r<72&&g<72&&b<72&&Math.max(r,g,b)-Math.min(r,g,b)<25)m[p]=1;
-  }
-  return m;
-}
-function redMask(c){
-  const d=imageData(c),m=new Uint8Array(c.width*c.height);
-  for(let i=0,p=0;i<d.length;i+=4,p++){
-    const r=d[i],g=d[i+1],b=d[i+2];
-    if(r>135&&r>g*1.28&&r>b*1.22&&(r-g)>35)m[p]=1;
-  }
-  return m;
-}
-function boundaryFromDark(c){
-  const w=c.width,h=c.height,m=darkMask(c),roi={x0:.05,x1:.86,y0:.08,y1:.86};
-  const samples=[];
-  for(let x=Math.floor(w*roi.x0);x<Math.floor(w*roi.x1);x+=3){
-    let ys=[];for(let y=Math.floor(h*roi.y0);y<Math.floor(h*roi.y1);y++)if(m[y*w+x])ys.push(y);
-    if(ys.length>8){samples.push({x,y:ys[0],edge:'top'});samples.push({x,y:ys[ys.length-1],edge:'bottom'})}
-  }
-  for(let y=Math.floor(h*roi.y0);y<Math.floor(h*roi.y1);y+=3){
-    let xs=[];for(let x=Math.floor(w*roi.x0);x<Math.floor(w*roi.x1);x++)if(m[y*w+x])xs.push(x);
-    if(xs.length>8){samples.push({x:xs[0],y,edge:'left'});samples.push({x:xs[xs.length-1],y,edge:'right'})}
-  }
-  const groups={top:[],bottom:[],left:[],right:[]};samples.forEach(p=>groups[p.edge].push(p));
-  function median(vals){const a=[...vals].sort((a,b)=>a-b);return a.length?a[(a.length/2)|0]:null}
-  function robustLine(pts,vertical=false){
-    if(pts.length<12)return null;
-    let cur=pts.slice(),line=null;
-    for(let k=0;k<4;k++){
-      let sx=0,sy=0,sxx=0,sxy=0,n=cur.length;
-      for(const p of cur){const X=vertical?p.y:p.x,Y=vertical?p.x:p.y;sx+=X;sy+=Y;sxx+=X*X;sxy+=X*Y}
-      const den=n*sxx-sx*sx;if(Math.abs(den)<1e-6)return null;
-      const a=(n*sxy-sx*sy)/den,b=(sy-a*sx)/n;line={a,b,vertical,count:cur.length};
-      const errs=cur.map(p=>Math.abs((vertical?p.x:p.y)-(a*(vertical?p.y:p.x)+b)));
-      const med=median(errs)||1,lim=Math.max(3,med*2.0);
-      cur=cur.filter((p,i)=>errs[i]<=lim); if(cur.length<12)break;
-    }
-    return line;
-  }
-  const L={top:robustLine(groups.top,false),bottom:robustLine(groups.bottom,false),left:robustLine(groups.left,true),right:robustLine(groups.right,true)};
-  function intersect(hline,vline){
-    if(!hline||!vline)return null;
-    const den=1-vline.a*hline.a;if(Math.abs(den)<1e-6)return null;
-    const x=(vline.a*hline.b+vline.b)/den,y=hline.a*x+hline.b;
-    return {x:x/w,y:y/h};
-  }
-  let poly=[intersect(L.top,L.left),intersect(L.top,L.right),intersect(L.bottom,L.right),intersect(L.bottom,L.left)].filter(Boolean);
-  poly=poly.filter(p=>p.x>=0&&p.x<=1&&p.y>=0&&p.y<=1);
-  return {lines:L,polygon:poly,samples:groups};
-}
-function connectedRed(c){
-  const w=c.width,h=c.height,m=redMask(c),seen=new Uint8Array(m.length),stack=[],out=[];
-  const x0=Math.floor(w*.05),x1=Math.floor(w*.86),y0=Math.floor(h*.08),y1=Math.floor(h*.86);
-  for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){
-    const p=y*w+x;if(!m[p]||seen[p])continue;seen[p]=1;stack.push(p);
-    let n=0,minx=x,maxx=x,miny=y,maxy=y,sx=0,sy=0;
-    while(stack.length){
-      const q=stack.pop(),qx=q%w,qy=(q/w)|0;n++;sx+=qx;sy+=qy;
-      minx=Math.min(minx,qx);maxx=Math.max(maxx,qx);miny=Math.min(miny,qy);maxy=Math.max(maxy,qy);
-      for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]]){
-        const nx=qx+dx,ny=qy+dy;if(nx<x0||nx>=x1||ny<y0||ny>=y1)continue;
-        const z=ny*w+nx;if(m[z]&&!seen[z]){seen[z]=1;stack.push(z)}
-      }
-    }
-    const bw=maxx-minx+1,bh=maxy-miny+1;
-    if(n>=3&&n<=500&&bw<=45&&bh<=45)out.push({x:sx/n/w,y:sy/n/h,area:n,w:bw/w,h:bh/h});
-  }
-  out.sort((a,b)=>b.area-a.area);const keep=[];
-  for(const p of out){if(!keep.some(q=>Math.hypot(p.x-q.x,p.y-q.y)<.012))keep.push(p);if(keep.length>=120)break}
-  return keep;
-}
-function detectGrid(c){
-  const d=imageData(c),w=c.width,h=c.height;
-  function neutralDark(x,y){const i=(y*w+x)*4,r=d[i],g=d[i+1],b=d[i+2];return r<165&&g<175&&b<175&&Math.max(r,g,b)-Math.min(r,g,b)<30}
-  const xs=[],ys=[];
-  for(let x=Math.floor(w*.1);x<Math.floor(w*.82);x+=2){let n=0;for(let y=Math.floor(h*.12);y<Math.floor(h*.76);y++)if(neutralDark(x,y))n++;if(n>h*.25)xs.push(x/w)}
-  for(let y=Math.floor(h*.12);y<Math.floor(h*.76);y+=2){let n=0;for(let x=Math.floor(w*.1);x<Math.floor(w*.82);x++)if(neutralDark(x,y))n++;if(n>w*.28)ys.push(y/h)}
-  function cluster(a){const o=[];for(const v of a){if(!o.length||Math.abs(v-o[o.length-1])>.006)o.push(v);else o[o.length-1]=(o[o.length-1]+v)/2}return o}
-  return {x:cluster(xs),y:cluster(ys)};
-}
-function segmentTable(poly){
-  if(poly.length<3)return '';
-  const rows=[];for(let i=0;i<poly.length;i++){
-    const a=poly[i],b=poly[(i+1)%poly.length],dx=b.x-a.x,dy=b.y-a.y;
-    rows.push(`<tr><td>S${i+1}</td><td>${a.x.toFixed(3)}, ${a.y.toFixed(3)}</td><td>${b.x.toFixed(3)}, ${b.y.toFixed(3)}</td><td>${Math.hypot(dx,dy).toFixed(3)}</td><td>${Math.round(Math.atan2(dy,dx)*180/Math.PI)}°</td></tr>`);
-  }
-  return `<div class="table"><table><thead><tr><th>Segment</th><th>Start N</th><th>End N</th><th>Length N</th><th>Angle</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
-}
-function draw(a4,geom,reds){
-  const out=$('g23Preview'),src=a4;if(!out)return;
-  const s=Math.min(1,1050/src.width);out.width=Math.round(src.width*s);out.height=Math.round(src.height*s);
-  const q=out.getContext('2d');q.drawImage(src,0,0,out.width,out.height);q.lineWidth=4;
-  if(geom.polygon.length>=3){q.beginPath();geom.polygon.forEach((p,i)=>{const x=p.x*out.width,y=p.y*out.height;i?q.lineTo(x,y):q.moveTo(x,y)});q.closePath();q.stroke()}
-  q.font='13px sans-serif';reds.slice(0,80).forEach((p,i)=>{q.beginPath();q.arc(p.x*out.width,p.y*out.height,4,0,Math.PI*2);q.stroke();if(i<30)q.fillText(String(i+1),p.x*out.width+5,p.y*out.height-5)});
-  out.style.display='block';
-}
-async function readSheet(pageNo){const page=await doc.getPage(pageNo),src=await render(page),small=downsample(src);return {src,small}}
-async function run(){
-  if(!file||busy)return;busy=true;ui();result=null;$('g23State').textContent=tr('ANALYSING','تحليل');$('g23State').className='chip warn';
-  try{
-    if(!window.pdfjsLib)throw Error('PDF engine unavailable');
-    if(!doc){const data=new Uint8Array(await file.arrayBuffer());doc=await pdfjsLib.getDocument({data}).promise}
-    if(doc.numPages<5)throw Error('A-01/A-04 mapping unavailable');
-    $('g23Summary').textContent=tr('Tracing architectural envelope from A-01…','جاري تتبع حدود الفراغ المعمارية من A-01…');
-    const A1=await readSheet(2),geom=boundaryFromDark(A1.small);
-    $('g23Summary').textContent=tr('Detecting red lighting/suspension candidates and ceiling grid on A-04…','جاري اكتشاف مرشحات الإضاءة/التعليق الحمراء وشبكة السقف في A-04…');
-    const A4=await readSheet(5),reds=connectedRed(A4.small),grid=detectGrid(A4.small);
-    result={A1,A4,geom,reds,grid};const polyOK=geom.polygon.length===4;
-    cards([[tr('A-01 wall envelope','حدود حوائط A-01'),polyOK?tr('4-corner model','نموذج 4 أركان'):tr('Review','مراجعة')],[tr('Wall segments','قطاعات الحوائط'),geom.polygon.length],[tr('A-04 red candidates','مرشحات A-04 الحمراء'),reds.length],[tr('Ceiling grid X lines','خطوط شبكة السقف X'),grid.x.length],[tr('Ceiling grid Y lines','خطوط شبكة السقف Y'),grid.y.length],[tr('Coordinate system','نظام الإحداثيات'),tr('Normalized 0–1','معياري 0–1')]]);
-    $('g23Segments').innerHTML=segmentTable(geom.polygon);
-    const ev=[tr('A-01 is used only for the architectural envelope. A-04 does not replace the base room geometry.','تُستخدم A-01 فقط لحدود الفراغ المعمارية. لا تستبدل A-04 الهندسة الأساسية للفراغ.'),tr('Red components on A-04 are stored as candidates, not automatically called spotlights; final classification must agree with the project legend on A-00.','تُحفظ المكونات الحمراء في A-04 كمرشحات فقط، ولا يتم تسميتها سبوت لايت تلقائيًا؛ يجب أن يتوافق التصنيف النهائي مع مفتاح الرموز في A-00.'),tr('The model now has normalized coordinates for walls, red candidates and ceiling-grid evidence, ready to be calibrated by verified dimensions.','أصبح النموذج يحتوي على إحداثيات معيارية للحوائط والمرشحات الحمراء وأدلة شبكة السقف، وجاهزًا للمعايرة بالأبعاد المؤكدة.'),tr('No real-world metre coordinates are invented when dimension calibration is not yet verified.','لا يتم اختلاق إحداثيات بالمتر عندما تكون معايرة الأبعاد غير مؤكدة بعد.')];
-    $('g23Evidence').innerHTML=ev.map(x=>`<div class="tip">• ${esc(x)}</div>`).join('');draw(A4.src,geom,reds);
-    $('g23State').textContent=polyOK?tr('MODEL READY','النموذج جاهز'):tr('REVIEW','مراجعة');$('g23State').className='chip '+(polyOK?'good':'warn');$('g23Summary').textContent=tr('Geometry and lighting-feature extraction completed.','اكتمل استخراج الهندسة وعناصر الإضاءة المرشحة.');
-  }catch(e){console.error(e);$('g23State').textContent=tr('ERROR','خطأ');$('g23Summary').textContent=tr('Geometry extraction failed: ','فشل استخراج الهندسة: ')+(e.message||e)}finally{busy=false}
-}
-function apply(){
-  if(!result?.geom?.polygon?.length){alert(tr('No usable wall geometry yet.','لا توجد هندسة حوائط قابلة للاستخدام حتى الآن.'));return}
-  window.KLS_PLAN_GEOMETRY={source:{geometry:'A-01',lighting:'A-04'},coordinateSystem:'normalized',polygon:result.geom.polygon,segments:result.geom.polygon.map((a,i)=>{const b=result.geom.polygon[(i+1)%result.geom.polygon.length];return{id:'S'+(i+1),start:a,end:b,lengthNormalized:Math.hypot(b.x-a.x,b.y-a.y),angleDeg:Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI}}),lightingCandidates:result.reds,ceilingGrid:result.grid,dimensionModel:window.KLS_DIMENSION_MODEL||null,status:window.KLS_DIMENSION_MODEL?'mixed':'estimated'};
-  $('spaceGeometryState').textContent=tr('Plan geometry model created','تم إنشاء نموذج هندسة المخطط');$('spaceConfidence').textContent=tr(window.KLS_DIMENSION_MODEL?'Confidence: mixed':'Confidence: estimated',window.KLS_DIMENSION_MODEL?'درجة الثقة: مختلطة':'درجة الثقة: تقديرية');$('smartSpace').textContent=tr('A-01 wall geometry + A-04 lighting features linked','تم ربط هندسة A-01 بعناصر الإضاءة في A-04');if($('approveGeom'))$('approveGeom').checked=false;
-}
-function boot(){ui();const inp=$('spaceFileNative');if(inp){const f=e=>{const x=e.target.files?.[0];if(x&&(x.type==='application/pdf'||/\.pdf$/i.test(x.name))){file=x;doc=null;result=null;setTimeout(run,2600)}};inp.addEventListener('change',f);inp.addEventListener('input',f)}}
+function ui(){let b=$('klsGeomFeatures');if(!b){const host=$('klsDeepDimensions')||$('pvSelection')||$('planStatus')?.closest('.panel');if(!host)return null;b=document.createElement('div');b.id='klsGeomFeatures';host.appendChild(b)}b.style.cssText='margin-top:12px;padding:12px;border:1px solid #31506a;border-radius:14px;background:#0a151f';b.innerHTML=`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap"><strong>${tr('KLS Integrated Plan Model v24','نموذج المخطط المتكامل v24')}</strong><span id="g24State" class="chip warn">${tr('WAITING','انتظار')}</span></div><p id="g24Summary" class="tip">${tr('Builds one reviewable model from A-01 geometry, A-04 ceiling/lighting evidence and the dimension model.','يبني نموذجاً واحداً قابلاً للمراجعة من هندسة A-01 وأدلة السقف/الإضاءة في A-04 ونموذج الأبعاد.')}</p><div id="g24Facts" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(135px,1fr));margin-top:8px"></div><canvas id="g24Preview" style="display:none;width:100%;max-height:480px;background:#fff;border-radius:10px;margin-top:10px"></canvas><div id="g24Layers" style="margin-top:10px"></div><div id="g24Evidence" style="margin-top:8px"></div><button id="g24Apply" class="btn good" style="margin-top:8px">${tr('Use integrated plan model','استخدام نموذج المخطط المتكامل')}</button>`;$('g24Apply').onclick=apply;return b}
+function cards(items){const h=$('g24Facts');if(h)h.innerHTML=items.map(([a,b])=>`<div class="card"><small>${esc(a)}</small><strong>${esc(b)}</strong></div>`).join('')}
+async function render(page,target=2400){const base=page.getViewport({scale:1}),s=Math.min(4.5,target/base.width),vp=page.getViewport({scale:s}),c=document.createElement('canvas');c.width=Math.round(vp.width);c.height=Math.round(vp.height);await page.render({canvasContext:c.getContext('2d',{alpha:false}),viewport:vp}).promise;return c}
+function small(src,maxW=1100){const s=Math.min(1,maxW/src.width),c=document.createElement('canvas');c.width=Math.round(src.width*s);c.height=Math.round(src.height*s);c.getContext('2d').drawImage(src,0,0,c.width,c.height);return c}
+function px(c){return c.getContext('2d').getImageData(0,0,c.width,c.height).data}
+function masks(c){const d=px(c),dark=new Uint8Array(c.width*c.height),red=new Uint8Array(c.width*c.height);for(let i=0,p=0;i<d.length;i+=4,p++){const r=d[i],g=d[i+1],b=d[i+2];if(r<70&&g<70&&b<70&&Math.max(r,g,b)-Math.min(r,g,b)<25)dark[p]=1;if(r>130&&r>g*1.25&&r>b*1.18&&(r-g)>30)red[p]=1}return{dark,red,w:c.width,h:c.height}}
+function wallEnvelope(M){const {dark,w,h}=M,roi={x0:.07,x1:.84,y0:.10,y1:.83},pts=[];for(let y=Math.floor(h*roi.y0);y<Math.floor(h*roi.y1);y+=3){let xs=[];for(let x=Math.floor(w*roi.x0);x<Math.floor(w*roi.x1);x++)if(dark[y*w+x])xs.push(x);if(xs.length>6){pts.push({x:xs[0],y});pts.push({x:xs[xs.length-1],y})}}for(let x=Math.floor(w*roi.x0);x<Math.floor(w*roi.x1);x+=3){let ys=[];for(let y=Math.floor(h*roi.y0);y<Math.floor(h*roi.y1);y++)if(dark[y*w+x])ys.push(y);if(ys.length>6){pts.push({x,y:ys[0]});pts.push({x,y:ys[ys.length-1]})}}pts.sort((a,b)=>a.x-b.x||a.y-b.y);const cross=(o,a,b)=>(a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x),lo=[];for(const p of pts){while(lo.length>=2&&cross(lo[lo.length-2],lo[lo.length-1],p)<=0)lo.pop();lo.push(p)}const up=[];for(let i=pts.length-1;i>=0;i--){const p=pts[i];while(up.length>=2&&cross(up[up.length-2],up[up.length-1],p)<=0)up.pop();up.push(p)}let hull=lo.slice(0,-1).concat(up.slice(0,-1));function dist(p,a,b){const A=b.y-a.y,B=a.x-b.x,C=b.x*a.y-a.x*b.y;return Math.abs(A*p.x+B*p.y+C)/Math.max(1,Math.hypot(A,B))}let changed=true;while(changed&&hull.length>4){changed=false;for(let i=0;i<hull.length;i++){const a=hull[(i-1+hull.length)%hull.length],p=hull[i],b=hull[(i+1)%hull.length];if(dist(p,a,b)<5){hull.splice(i,1);changed=true;break}}}return hull.map(p=>({x:p.x/w,y:p.y/h}))}
+function connected(mask,w,h){const seen=new Uint8Array(mask.length),stack=[],out=[],x0=Math.floor(w*.06),x1=Math.floor(w*.86),y0=Math.floor(h*.08),y1=Math.floor(h*.84);for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){const p=y*w+x;if(!mask[p]||seen[p])continue;seen[p]=1;stack.push(p);let n=0,minx=x,maxx=x,miny=y,maxy=y,sx=0,sy=0;while(stack.length){const q=stack.pop(),qx=q%w,qy=(q/w)|0;n++;sx+=qx;sy+=qy;minx=Math.min(minx,qx);maxx=Math.max(maxx,qx);miny=Math.min(miny,qy);maxy=Math.max(maxy,qy);for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]]){const nx=qx+dx,ny=qy+dy;if(nx<x0||nx>=x1||ny<y0||ny>=y1)continue;const z=ny*w+nx;if(mask[z]&&!seen[z]){seen[z]=1;stack.push(z)}}}if(n>=3&&n<=4500)out.push({area:n,minx,maxx,miny,maxy,cx:sx/n,cy:sy/n,w:maxx-minx+1,h:maxy-miny+1})}return out}
+function classifyRed(M){const comps=connected(M.red,M.w,M.h),tracks=[],symbols=[],other=[];for(const c of comps){const ar=Math.max(c.w,c.h)/Math.max(1,Math.min(c.w,c.h)),n={x:c.cx/M.w,y:c.cy/M.h,w:c.w/M.w,h:c.h/M.h,area:c.area};if(ar>=5&&Math.max(c.w,c.h)>=18){n.orientation=c.w>=c.h?'H':'V';tracks.push(n)}else if(c.w<=42&&c.h<=42&&c.area<=500)symbols.push(n);else other.push(n)}const keep=[];symbols.sort((a,b)=>b.area-a.area);for(const p of symbols){if(!keep.some(q=>Math.hypot(p.x-q.x,p.y-q.y)<.012))keep.push(p);if(keep.length>=120)break}return{tracks,symbols:keep,other}}
+function detectGrid(M){const {dark,w,h}=M,xs=[],ys=[];for(let x=Math.floor(w*.10);x<Math.floor(w*.82);x+=2){let n=0;for(let y=Math.floor(h*.12);y<Math.floor(h*.76);y++)if(dark[y*w+x])n++;if(n>h*.28)xs.push(x/w)}for(let y=Math.floor(h*.12);y<Math.floor(h*.76);y+=2){let n=0;for(let x=Math.floor(w*.10);x<Math.floor(w*.82);x++)if(dark[y*w+x])n++;if(n>w*.30)ys.push(y/h)}const cluster=a=>{const o=[];for(const v of a){if(!o.length||Math.abs(v-o[o.length-1])>.006)o.push(v);else o[o.length-1]=(o[o.length-1]+v)/2}return o};return{x:cluster(xs),y:cluster(ys)}}
+function segments(poly){return poly.map((a,i)=>{const b=poly[(i+1)%poly.length];return{id:'W'+String(i+1).padStart(2,'0'),start:a,end:b,lengthNormalized:Math.hypot(b.x-a.x,b.y-a.y),angleDeg:Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI}})}
+function draw(src,poly,features){const out=$('g24Preview'),s=Math.min(1,1050/src.width);out.width=Math.round(src.width*s);out.height=Math.round(src.height*s);const q=out.getContext('2d');q.drawImage(src,0,0,out.width,out.height);q.lineWidth=4;if(poly.length>=3){q.beginPath();poly.forEach((p,i)=>{const x=p.x*out.width,y=p.y*out.height;i?q.lineTo(x,y):q.moveTo(x,y)});q.closePath();q.stroke()}q.lineWidth=2;features.tracks.slice(0,30).forEach(p=>q.strokeRect((p.x-p.w/2)*out.width,(p.y-p.h/2)*out.height,p.w*out.width,p.h*out.height));features.symbols.slice(0,80).forEach((p,i)=>{q.beginPath();q.arc(p.x*out.width,p.y*out.height,4,0,Math.PI*2);q.stroke();if(i<24)q.fillText(String(i+1),p.x*out.width+5,p.y*out.height-4)});out.style.display='block'}
+function layerTable(poly){const rows=segments(poly).map(s=>`<tr><td>${s.id}</td><td>${s.start.x.toFixed(3)}, ${s.start.y.toFixed(3)}</td><td>${s.end.x.toFixed(3)}, ${s.end.y.toFixed(3)}</td><td>${s.lengthNormalized.toFixed(3)}</td><td>${Math.round(s.angleDeg)}°</td></tr>`).join('');$('g24Layers').innerHTML=`<div class="table"><table><thead><tr><th>${tr('Wall','حائط')}</th><th>${tr('Start','بداية')}</th><th>${tr('End','نهاية')}</th><th>${tr('Length N','الطول N')}</th><th>${tr('Angle','الزاوية')}</th></tr></thead><tbody>${rows}</tbody></table></div>`}
+async function readSheet(pn){const p=await doc.getPage(pn),src=await render(p),sm=small(src),M=masks(sm);return{src,sm,M}}
+async function run(){if(!file||busy)return;busy=true;ui();result=null;$('g24State').textContent=tr('BUILDING MODEL','بناء النموذج');$('g24State').className='chip warn';try{if(!window.pdfjsLib)throw Error('PDF engine unavailable');if(!doc){const data=new Uint8Array(await file.arrayBuffer());doc=await pdfjsLib.getDocument({data}).promise}if(doc.numPages<5)throw Error('A-01/A-04 mapping unavailable');$('g24Summary').textContent=tr('Reading A-01 wall envelope…','جاري قراءة حدود حوائط A-01…');const A1=await readSheet(2),poly=wallEnvelope(A1.M);$('g24Summary').textContent=tr('Reading A-04 lighting and ceiling evidence…','جاري قراءة أدلة الإضاءة والسقف في A-04…');const A4=await readSheet(5),features=classifyRed(A4.M),grid=detectGrid(A4.M),dim=window.KLS_DIMENSION_MODEL||null,status=dim?'mixed':'estimated';result={A1,A4,poly,features,grid,dim,status};cards([[tr('Wall vertices','نقاط حدود الحوائط'),poly.length],[tr('Wall segments','قطاعات الحوائط'),poly.length],[tr('Track-like red elements','عناصر حمراء شبيهة بالتراك'),features.tracks.length],[tr('Compact red symbols','رموز حمراء مدمجة'),features.symbols.length],[tr('Ceiling grid X','شبكة السقف X'),grid.x.length],[tr('Ceiling grid Y','شبكة السقف Y'),grid.y.length],[tr('Dimension calibration','معايرة الأبعاد'),dim?tr('Linked','مرتبطة'):tr('Pending review','بانتظار المراجعة')],[tr('Model status','حالة النموذج'),status.toUpperCase()]]);layerTable(poly);draw(A4.src,poly,features);const ev=[tr('A-01 remains the only base geometry authority.','تظل A-01 المرجع الأساسي الوحيد لهندسة الفراغ.'),tr('The wall envelope is no longer forced to four corners; it is stored as a simplified irregular polygon.','لم تعد حدود الحوائط مجبرة على أربعة أركان؛ بل تُحفظ كمضلع غير منتظم مبسط.'),tr('A-04 red geometry is split into elongated track-like candidates and compact symbol candidates instead of one mixed red list.','يتم تقسيم العناصر الحمراء في A-04 إلى مرشحات طويلة شبيهة بالتراك ورموز مدمجة بدلاً من قائمة حمراء مختلطة واحدة.'),tr('Classification remains evidence-based until A-00 legend matching confirms Track Light / Spotlight / Wire Rope semantics.','يظل التصنيف قائماً على الأدلة إلى أن يؤكد ربط Legend في A-00 معنى Track Light / Spotlight / Wire Rope.'),tr('No metre coordinates are invented without verified dimension calibration.','لا يتم اختلاق إحداثيات بالمتر دون معايرة أبعاد مؤكدة.')];$('g24Evidence').innerHTML=ev.map(x=>`<div class="tip">• ${esc(x)}</div>`).join('');$('g24State').textContent=tr('MODEL READY','النموذج جاهز');$('g24State').className='chip good';$('g24Summary').textContent=tr('Integrated plan model completed.','اكتمل نموذج المخطط المتكامل.')}catch(e){console.error(e);$('g24State').textContent=tr('ERROR','خطأ');$('g24Summary').textContent=tr('Integrated model failed: ','فشل النموذج المتكامل: ')+(e.message||e)}finally{busy=false}}
+function apply(){if(!result?.poly?.length){alert(tr('No usable geometry yet.','لا توجد هندسة قابلة للاستخدام حتى الآن.'));return}window.KLS_ANALYSIS_MODEL={version:'24',sourceSheets:{geometry:'A-01',lighting:'A-04',legend:'A-00',artwork:'A-02'},status:result.status,coordinateSystem:result.dim?'normalized + dimension-linked':'normalized',geometry:{polygon:result.poly,segments:segments(result.poly)},dimensions:result.dim,ceiling:{grid:result.grid},lighting:{trackCandidates:result.features.tracks,symbolCandidates:result.features.symbols},evidence:{geometry:'A-01 dark wall envelope',lighting:'A-04 red geometry',dimensionModel:!!result.dim}};$('spaceGeometryState').textContent=tr('Integrated A-01/A-04 model created','تم إنشاء نموذج A-01/A-04 المتكامل');$('spaceConfidence').textContent=tr(result.dim?'Confidence: mixed':'Confidence: estimated',result.dim?'درجة الثقة: مختلطة':'درجة الثقة: تقديرية');$('smartSpace').textContent=tr('Geometry + ceiling + lighting candidates linked','تم ربط الهندسة والسقف ومرشحات الإضاءة');if($('approveGeom'))$('approveGeom').checked=false}
+function boot(){ui();const inp=$('spaceFileNative');if(inp){const f=e=>{const x=e.target.files?.[0];if(x&&(x.type==='application/pdf'||/\.pdf$/i.test(x.name))){file=x;doc=null;result=null;setTimeout(run,3200)}};inp.addEventListener('change',f);inp.addEventListener('input',f)}}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
 })();
