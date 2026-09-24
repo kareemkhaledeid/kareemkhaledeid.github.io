@@ -87,8 +87,59 @@ a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px soli
   .project-intro { padding-top: 115px; }
   .project-nav { font-size: 10px; gap: 14px; }
 }
+/* A short lighting cue and one-time entrances keep the photography central. */
+.motion-enter {
+  animation: portfolio-enter 720ms cubic-bezier(.22, .61, .36, 1) both;
+  animation-delay: var(--motion-delay, 0ms);
+}
+@keyframes portfolio-enter {
+  from { opacity: 0; translate: 0 18px; }
+  to { opacity: 1; translate: 0 0; }
+}
+.hero-photo.light-cue::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: 0 auto 0 -70%;
+  width: 70%;
+  pointer-events: none;
+  background: linear-gradient(100deg, transparent 12%, rgba(245, 238, 219, .16) 50%, transparent 88%);
+  animation: portfolio-light 1500ms cubic-bezier(.25, .46, .45, .94) 180ms both;
+}
+@keyframes portfolio-light {
+  0% { opacity: 0; transform: translateX(0) skewX(-12deg); }
+  25% { opacity: 1; }
+  80% { opacity: .65; }
+  100% { opacity: 0; transform: translateX(245%) skewX(-12deg); }
+}
+.nav-links a:not(.nav-cta), .project-nav a:not(.nav-cta) { position: relative; }
+.nav-links a:not(.nav-cta)::after, .project-nav a:not(.nav-cta)::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -6px;
+  height: 1px;
+  background: var(--gold);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 240ms ease;
+}
+.nav-links a:focus-visible::after, .project-nav a:focus-visible::after { transform: scaleX(1); }
+.project-image { transition: border-color 300ms ease; }
+.project-link:focus-visible .project-image { border-color: var(--gold); }
+@media (hover: hover) and (pointer: fine) {
+  .nav-links a:hover::after, .project-nav a:hover::after { transform: scaleX(1); }
+  .project-link:hover .project-image { border-color: var(--gold); }
+}
+@media (hover: none) {
+  .project-card:hover img, .archive-photo:hover img { transform: none; }
+}
+@media (max-width: 560px) {
+  .motion-enter { animation-duration: 540ms; }
+}
 @media(prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
+  .motion-enter { opacity: 1; translate: none; }
+  .hero-photo.light-cue::before { display: none; }
+  .project-card:hover img, .archive-photo:hover img, .button:hover, .gallery-card:hover span { transform: none; }
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
-
