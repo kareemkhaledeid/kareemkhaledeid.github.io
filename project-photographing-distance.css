@@ -1,0 +1,70 @@
+/* Photographing Distance: complete, uncropped case-study panels. */
+.project-case-card .project-link {
+  display: grid;
+  grid-template-columns: minmax(0, 400px) minmax(0, 1fr);
+  gap: 64px;
+  align-items: center;
+  padding: 32px 0;
+  border-block: 1px solid var(--line);
+}
+.project-case-card .project-image { height: auto; aspect-ratio: 4 / 5; }
+.project-case-card .project-image img { object-fit: contain; }
+.project-case-card .project-image::after { display: none; }
+.project-case-card:hover img { transform: none; }
+.project-case-card .project-meta { padding: 0; }
+.project-case-card .project-meta h3 {
+  font-size: clamp(38px, 5vw, 64px);
+  line-height: 1;
+  letter-spacing: -.055em;
+  margin: 22px 0;
+}
+.project-case-card .project-meta p { color: #aaa7a0; font-size: 14px; }
+.project-case-card .project-meta .project-type { color: var(--gold); font-size: 10px; }
+.project-case-card .project-meta .case-venue { color: var(--paper); margin-bottom: 20px; }
+.project-case-card .project-meta .case-summary { max-width: 510px; margin-bottom: 20px; }
+.case-card-action { display: inline-block; margin-top: 30px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; border-bottom: 1px solid #555; padding-bottom: 5px; }
+.case-card-action b { margin-left: 14px; }
+.distance-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, .85fr);
+  gap: 64px;
+  align-items: center;
+  padding-bottom: 64px;
+}
+.distance-intro h1 { font-size: clamp(48px, 6.2vw, 84px); overflow-wrap: break-word; }
+.distance-intro-copy { max-width: 510px; color: #aaa7a0; font-size: 16px; line-height: 1.8; }
+.distance-intro .project-facts { gap: 18px; margin: 32px 0; }
+.distance-cover { margin: 0; }
+.distance-cover img, .distance-panel img { display: block; width: 100%; height: auto; }
+.distance-cover figcaption { font-size: 11px; color: #999; margin-top: 12px; }
+.distance-cover .image-open, .distance-panel .image-open { display: block; border: 1px solid #333; cursor: zoom-in; }
+.distance-cover .image-open:focus-visible, .distance-panel .image-open:focus-visible { outline-offset: 4px; }
+.distance-page .project-story { border-top: 1px solid var(--line); }
+.distance-series { scroll-margin-top: 105px; padding: 48px 0 60px; }
+.distance-series .section-heading h2 { font-size: clamp(40px, 6vw, 72px); }
+.distance-panel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 60px 36px; align-items: start; }
+.distance-panel { margin: 0; scroll-margin-top: 110px; }
+.distance-panel figcaption { padding: 20px 0 0; }
+.distance-panel .eyebrow { display: block; color: var(--gold); font-size: 9px; margin: 0 0 12px; }
+.distance-panel h3 { font-size: 24px; line-height: 1.2; font-weight: 500; letter-spacing: -.03em; margin: 0 0 10px; }
+.distance-panel figcaption p { color: #aaa7a0; font-size: 14px; line-height: 1.8; margin: 0; max-width: 520px; }
+.distance-credit { border-block: 1px solid var(--line); padding-top: 40px; padding-bottom: 40px; margin-top: 32px; }
+.distance-credit h2 { font-size: clamp(25px, 3vw, 40px); line-height: 1.2; font-weight: 500; letter-spacing: -.035em; margin: 0 0 14px; }
+.distance-credit p:last-child { color: #aaa7a0; font-size: 14px; margin: 0; }
+.distance-page .hero-actions { flex-wrap: wrap; }
+@media (max-width: 900px) {
+  .project-case-card .project-link { grid-template-columns: minmax(0, .8fr) minmax(0, 1fr); gap: 32px; }
+  .distance-intro { grid-template-columns: minmax(0, 1fr) minmax(0, .9fr); gap: 32px; }
+  .distance-intro h1 { font-size: clamp(38px, 6vw, 64px); }
+  .distance-intro .project-facts { grid-template-columns: 1fr; gap: 12px; }
+}
+@media (max-width: 640px) {
+  .project-case-card .project-link, .distance-intro, .distance-panel-grid { grid-template-columns: minmax(0, 1fr); }
+  .project-case-card .project-link { gap: 26px; }
+  .project-case-card .project-image { max-width: 440px; width: 100%; margin: auto; }
+  .project-case-card .project-meta h3 { font-size: 46px; }
+  .distance-intro { gap: 36px; }
+  .distance-intro h1 { font-size: clamp(40px, 11vw, 66px); }
+  .distance-panel-grid { gap: 44px; }
+  .distance-cover { max-width: 480px; width: 100%; margin: auto; }
+}
