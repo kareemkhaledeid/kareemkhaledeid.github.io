@@ -3,10 +3,13 @@
   document.documentElement.classList.add('js');
 
   const legacy = new Set(['#archive-decor', '#archive-set', '#archive-lighting', '#archive-scenography', '#archive-events', '#archive-film', '#archive-exhibition']);
-  if (document.body.dataset.page === 'home' && legacy.has(location.hash)) {
+  const followLegacyAnchor = () => {
+    if (document.body.dataset.page !== 'home' || !legacy.has(location.hash)) return false;
     location.replace(`archive.html${location.hash}`);
-    return;
-  }
+    return true;
+  };
+  if (followLegacyAnchor()) return;
+  window.addEventListener('hashchange', followLegacyAnchor);
 
   const toggle = document.querySelector('.nav-toggle');
   const links = document.querySelector('.nav-links');
